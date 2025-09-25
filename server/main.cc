@@ -1,12 +1,15 @@
 #include <grpcpp/grpcpp.h>
 #include <mutex>
-#include <unordered_map>
-#include <unordered_set>
+#include <vector>
+#include <string>
 #include <memory>
-#include <iostream>
+#include <fstream>
+#include <ctime>
+#include <iomanip>
+#include <algorithm> // std::remove
 
-#include "bg/v1/bg.pb.h"
 #include "bg/v1/bg.grpc.pb.h"
+#include "bg/v1/bg.pb.h"
 
 #include "../board.hpp"
 
@@ -19,252 +22,293 @@ using grpc::Status;
 namespace proto = ::bg::v1;
 namespace BGNS  = ::BG;
 
-struct Conn {
-  ServerReaderWriter<proto::Envelope, proto::Envelope>* rw{};
-  std::string user_id;
+// ---------- tiny logger ----------
+struct Logger {
+  std::ofstream out;
+  explicit Logger(const char* path){ out.open(path, std::ios::app); }
+  template<typename... Args>
+  void log(Args&&... parts){
+    if (!out) return;
+    auto t = std::time(nullptr); std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << " ";
+    (out << ... << parts) << "\n";
+    out.flush();
+  }
 };
+// ---------------------------------
 
+// A single in-memory match ("m1") with one Board and many subscribers.
 struct Match {
-  std::mutex m;
-  uint64_t version = 0;
   BGNS::Board board;
-  BGNS::Rules rules;
-  std::unordered_set<Conn*> conns;
+  uint64_t version = 0;
+
+  std::mutex mtx;
+  std::vector< ServerReaderWriter<proto::Envelope, proto::Envelope>* > subs;
+
+  std::unique_ptr<Logger> log;
 
   Match(){
-    board.startGame(rules); // OpeningRoll phase
+    if (std::getenv("BG_SERVER_LOG"))
+      log = std::make_unique<Logger>("bg_server.log");
+
+    // Start a new game: opening doubles are rerolled, no auto-doubles.
+    BGNS::Rules rules{};
+    rules.openingDoublePolicy = BGNS::Rules::OpeningDoublePolicy::REROLL;
+    rules.maxOpeningAutoDoubles = 0;
+    board.startGame(rules);
   }
 
-  proto::BoardState toProtoState() {
+  // Convert the current board to proto::BoardState
+  proto::BoardState toProtoState(){
     proto::BoardState out;
-    BGNS::Board::State s;
-    board.getState(s);
-    for (int i=0;i<24;++i){
-      auto* p = out.add_points();
-      if (s.points[i].side==BGNS::WHITE){ p->set_side(proto::WHITE); p->set_count(s.points[i].count); }
-      else if (s.points[i].side==BGNS::BLACK){ p->set_side(proto::BLACK); p->set_count(s.points[i].count); }
-      else { p->set_side(proto::NONE); p->set_count(0); }
+
+    // points
+    for (int p=1; p<=24; ++p){
+      unsigned cntW = board.countAt(BGNS::WHITE, p);
+      unsigned cntB = board.countAt(BGNS::BLACK, p);
+      auto* pt = out.add_points();
+      if (cntW==0 && cntB==0){ pt->set_side(proto::NONE); pt->set_count(0); }
+      else if (cntW>0){ pt->set_side(proto::WHITE); pt->set_count(cntW); }
+      else { pt->set_side(proto::BLACK); pt->set_count(cntB); }
     }
-    out.set_white_bar(s.whitebar);
-    out.set_black_bar(s.blackbar);
-    out.set_white_off(s.whiteoff);
-    out.set_black_off(s.blackoff);
-    out.set_cube_value(board.cubeValue());
-    out.set_cube_holder(board.cubeHolder()==BGNS::WHITE?proto::WHITE:
-                        board.cubeHolder()==BGNS::BLACK?proto::BLACK:proto::NONE);
-    switch(board.phase()){
-      case BGNS::Phase::OpeningRoll:   out.set_phase(proto::OPENING_ROLL);  break;
-      case BGNS::Phase::AwaitingRoll:  out.set_phase(proto::AWAITING_ROLL); break;
-      case BGNS::Phase::Moving:        out.set_phase(proto::MOVING);        break;
-      case BGNS::Phase::CubeOffered:   out.set_phase(proto::CUBE_OFFERED);  break;
+
+    // bars/off
+    out.set_white_bar(board.countBar(BGNS::WHITE));
+    out.set_black_bar(board.countBar(BGNS::BLACK));
+    out.set_white_off(board.countOff(BGNS::WHITE));
+    out.set_black_off(board.countOff(BGNS::BLACK));
+
+    // cube holder (no numeric cube field in your proto)
+    auto h = board.cubeHolder();
+    out.set_cube_holder(h==BGNS::WHITE?proto::WHITE : h==BGNS::BLACK?proto::BLACK : proto::NONE);
+
+    // phase
+    switch (board.phase()){
+      case BGNS::Phase::OpeningRoll:  out.set_phase(proto::OPENING_ROLL); break;
+      case BGNS::Phase::AwaitingRoll: out.set_phase(proto::AWAITING_ROLL); break;
+      case BGNS::Phase::Moving:       out.set_phase(proto::MOVING); break;
+      case BGNS::Phase::CubeOffered:  out.set_phase(proto::CUBE_OFFERED); break;
     }
-    out.set_side_to_move(board.sideToMove()==BGNS::WHITE?proto::WHITE:
-                         board.sideToMove()==BGNS::BLACK?proto::BLACK:proto::NONE);
-    for (auto d: board.diceRemaining()) out.add_dice_remaining(d);
+
+    // side to move
+    auto s = board.sideToMove();
+    out.set_side_to_move(s==BGNS::WHITE?proto::WHITE : s==BGNS::BLACK?proto::BLACK : proto::NONE);
+
+    // dice
+    for (int d : board.diceRemaining()) out.add_dice_remaining(d);
+
     return out;
   }
 
-  void broadcast(const proto::Envelope& ev){
-    for (auto* c : conns) c->rw->Write(ev);
+  void sendError(ServerReaderWriter<proto::Envelope, proto::Envelope>* rw, int code, const std::string& msg){
+    proto::Envelope ev;
+    auto* e = ev.mutable_evt()->mutable_error();
+    e->set_code(code);
+    e->set_message(msg);
+    rw->Write(ev);
+    if (log) log->log("[err] code=", code, " msg=", msg);
   }
 
-  void sendSnapshotToAll(){
+  void sendSnapshot(ServerReaderWriter<proto::Envelope, proto::Envelope>* rw){
     proto::Envelope ev;
-    auto* h = ev.mutable_header(); h->set_server_version(++version);
-    auto* sn = ev.mutable_evt()->mutable_snapshot();
-    sn->set_version(version);
-    *sn->mutable_state() = toProtoState();
-    broadcast(ev);
+    auto* snap = ev.mutable_evt()->mutable_snapshot();
+    snap->set_version(++version);
+    *snap->mutable_state() = toProtoState();
+    rw->Write(ev);
+  }
+
+  void broadcastSnapshot(){
+    proto::Envelope ev;
+    auto* snap = ev.mutable_evt()->mutable_snapshot();
+    snap->set_version(++version);
+    *snap->mutable_state() = toProtoState();
+    for (auto* s : subs) s->Write(ev);
+  }
+
+  void broadcastMsg(const char* m){
+    if (!log) return;
+    log->log(m);
   }
 };
 
-struct Registry {
-  std::mutex m;
-  std::unordered_map<std::string,std::unique_ptr<Match>> matches;
+static Match g_match;
 
-  Match* getOrCreate(const std::string& id){
-    std::lock_guard<std::mutex> lk(m);
-    auto it = matches.find(id);
-    if (it!=matches.end()) return it->second.get();
-    auto mm = std::make_unique<Match>();
-    auto* raw = mm.get();
-    matches.emplace(id, std::move(mm));
-    return raw;
-  }
-} REG;
+// ---------------- Services ----------------
 
 class AuthServiceImpl final : public proto::AuthService::Service {
 public:
   Status Login(ServerContext*, const proto::LoginReq* req, proto::LoginResp* resp) override {
-    resp->set_user_id("u_"+req->username());
-    resp->set_token("DEV-"+req->username()); // TODO: JWT
+    // Accept anything for now; echo a token
+    resp->set_user_id(req->username());
+    resp->set_token("ok");
+    if (g_match.log) g_match.log->log("[auth] user=", req->username(), " logged in");
     return Status::OK;
   }
 };
 
 class MatchServiceImpl final : public proto::MatchService::Service {
 public:
-  Status Stream(ServerContext* ctx, ServerReaderWriter<proto::Envelope, proto::Envelope>* rw) override {
-    Conn conn; conn.rw = rw;
-    proto::Envelope in;
-    Match* match = nullptr;
-
-    while (rw->Read(&in)) {
-      const auto& h = in.header();
-
-      if (in.has_cmd() && in.cmd().has_join_match()){
-        const auto& jm = in.cmd().join_match();
-        match = REG.getOrCreate(jm.match_id());
-        {
-          std::lock_guard<std::mutex> lk(match->m);
-          match->conns.insert(&conn);
-        }
-        match->sendSnapshotToAll();
-        continue;
-      }
-
-      if (!match) {
-        proto::Envelope ev; *ev.mutable_header() = h;
-        ev.mutable_evt()->mutable_error()->set_code(400);
-        ev.mutable_evt()->mutable_error()->set_message("JoinMatch first");
-        rw->Write(ev);
-        continue;
-      }
-
-      if (in.has_cmd()) {
-        std::lock_guard<std::mutex> lk(match->m);
-        auto& B = match->board;
-
-        auto errorOut = [&](int code, const std::string& msg){
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_evt()->mutable_error()->set_code(code);
-          ev.mutable_evt()->mutable_error()->set_message(msg);
-          rw->Write(ev);
-        };
-
-        const auto& cmd = in.cmd();
-
-        if (cmd.has_request_snapshot()){
-          match->sendSnapshotToAll();
-          continue;
-        }
-
-        if (cmd.has_roll_dice()){
-          try{
-            B.rollDice();
-            proto::Envelope ev; *ev.mutable_header() = h;
-            ev.mutable_header()->set_server_version(++match->version);
-            auto* ds = ev.mutable_evt()->mutable_dice_set();
-            for (auto d : B.diceRemaining()) ds->add_dice(d);
-            ds->set_actor(B.sideToMove()==BGNS::WHITE?proto::WHITE:proto::BLACK);
-            match->broadcast(ev);
-          }catch(const std::exception& e){
-            errorOut(409, e.what());
-          }
-          continue;
-        }
-
-        if (cmd.has_set_dice()){
-          try{
-            B.setDice(cmd.set_dice().d1(), cmd.set_dice().d2());
-            proto::Envelope ev; *ev.mutable_header() = h;
-            ev.mutable_header()->set_server_version(++match->version);
-            auto* ds = ev.mutable_evt()->mutable_dice_set();
-            for (auto d : B.diceRemaining()) ds->add_dice(d);
-            ds->set_actor(B.sideToMove()==BGNS::WHITE?proto::WHITE:proto::BLACK);
-            match->broadcast(ev);
-          }catch(const std::exception& e){ errorOut(409, e.what()); }
-          continue;
-        }
-
-        if (cmd.has_apply_step()){
-          int from = cmd.apply_step().from();
-          int pip  = cmd.apply_step().pip();
-          if (!B.applyStep(from, pip)){
-            errorOut(409, B.lastError());
-            continue;
-          }
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_header()->set_server_version(++match->version);
-          auto* st = ev.mutable_evt()->mutable_step_applied();
-          st->set_from(from);
-          st->set_pip(pip);
-          st->set_actor(B.sideToMove()==BGNS::WHITE?proto::WHITE:proto::BLACK); // actor before commit
-          st->set_to(-1);
-          match->broadcast(ev);
-          continue;
-        }
-
-        if (cmd.has_undo_step()){
-          if (!B.undoStep()){ errorOut(409,"nothing to undo"); continue; }
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_header()->set_server_version(++match->version);
-          ev.mutable_evt()->mutable_step_undone();
-          match->broadcast(ev);
-          continue;
-        }
-
-        if (cmd.has_commit_turn()){
-          if (!B.commitTurn()){ errorOut(409, B.lastError()); continue; }
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_header()->set_server_version(++match->version);
-          auto* tc = ev.mutable_evt()->mutable_turn_committed();
-          tc->set_next_to_move(B.sideToMove()==BGNS::WHITE?proto::WHITE:proto::BLACK);
-          match->broadcast(ev);
-          match->sendSnapshotToAll();
-          continue;
-        }
-
-        if (cmd.has_offer_cube()){
-          if (!B.offerCube()){ errorOut(409, B.lastError()); continue; }
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_header()->set_server_version(++match->version);
-          auto* co = ev.mutable_evt()->mutable_cube_offered();
-          co->set_from(B.sideToMove()==BGNS::WHITE?proto::BLACK:proto::WHITE); // offered to opponent
-          co->set_cube_value(B.cubeValue()*2);
-          match->broadcast(ev);
-          continue;
-        }
-
-        if (cmd.has_take_cube()){
-          if (!B.takeCube()){ errorOut(409, B.lastError()); continue; }
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_header()->set_server_version(++match->version);
-          auto* ct = ev.mutable_evt()->mutable_cube_taken();
-          ct->set_holder(B.cubeHolder()==BGNS::WHITE?proto::WHITE:proto::BLACK);
-          ct->set_cube_value(B.cubeValue());
-          match->broadcast(ev);
-          continue;
-        }
-
-        if (cmd.has_drop_cube()){
-          if (!B.dropCube()){ errorOut(409, B.lastError()); continue; }
-          proto::Envelope ev; *ev.mutable_header() = h;
-          ev.mutable_header()->set_server_version(++match->version);
-          auto* cd = ev.mutable_evt()->mutable_cube_dropped();
-          cd->set_winner(B.sideToMove()==BGNS::WHITE?proto::BLACK:proto::WHITE);
-          cd->set_final_cube(B.cubeValue());
-          match->broadcast(ev);
-          continue;
-        }
-      }
+  Status Stream(ServerContext*,
+                ServerReaderWriter<proto::Envelope, proto::Envelope>* rw) override
+  {
+    {
+      std::lock_guard<std::mutex> lk(g_match.mtx);
+      g_match.subs.push_back(rw);
     }
 
-    if (match){
-      std::lock_guard<std::mutex> lk(match->m);
-      match->conns.erase(&conn);
+    proto::Envelope in;
+    while (rw->Read(&in)){
+      if (!in.has_cmd()) continue;
+      const auto& cmd = in.cmd();
+
+      std::lock_guard<std::mutex> lk(g_match.mtx);
+
+      // join
+      if (cmd.has_join_match()){
+        g_match.broadcastMsg("[cmd] join_match");
+        g_match.sendSnapshot(rw);
+        continue;
+      }
+
+      // snapshot request
+      if (cmd.has_request_snapshot()){
+        g_match.broadcastMsg("[cmd] request_snapshot");
+        g_match.sendSnapshot(rw);
+        continue;
+      }
+
+      // roll: OpeningRoll vs normal
+      if (cmd.has_roll_dice()){
+        try{
+          if (g_match.board.phase()==BGNS::Phase::OpeningRoll){
+            auto wb = g_match.board.rollOpening(); (void)wb;
+            g_match.broadcastMsg("[cmd] roll (opening)");
+            g_match.broadcastSnapshot();
+          } else {
+            g_match.board.rollDice();
+            g_match.broadcastMsg("[cmd] roll");
+            g_match.broadcastSnapshot();
+          }
+        } catch (const std::exception& ex){
+          g_match.sendError(rw, 409, ex.what());
+        }
+        continue;
+      }
+
+      // set dice: OpeningRoll vs normal
+      if (cmd.has_set_dice()){
+        int d1 = cmd.set_dice().d1();
+        int d2 = cmd.set_dice().d2();
+        try{
+          if (g_match.board.phase()==BGNS::Phase::OpeningRoll){
+            bool ok = g_match.board.setOpeningDice(d1,d2);
+            g_match.broadcastMsg("[cmd] set (opening)");
+            if (!ok){
+              g_match.sendError(rw, 409, "opening doubles — reroll required");
+            }
+            g_match.broadcastSnapshot();
+          } else {
+            g_match.board.setDice(d1,d2);
+            g_match.broadcastMsg("[cmd] set");
+            g_match.broadcastSnapshot();
+          }
+        } catch (const std::exception& ex){
+          g_match.sendError(rw, 409, ex.what());
+        }
+        continue;
+      }
+
+      // step
+      if (cmd.has_apply_step()){
+        int from = cmd.apply_step().from();
+        int pip  = cmd.apply_step().pip();
+        bool ok = g_match.board.applyStep(from, pip);
+        if (!ok){
+          g_match.sendError(rw, 409, g_match.board.lastError());
+        } else {
+          g_match.broadcastMsg("[cmd] step");
+          g_match.broadcastSnapshot();
+        }
+        continue;
+      }
+
+      // undo
+      if (cmd.has_undo_step()){
+        bool ok = g_match.board.undoStep();
+        if (!ok){
+          g_match.sendError(rw, 409, "undoStep failed");
+        } else {
+          g_match.broadcastMsg("[cmd] undo");
+          g_match.broadcastSnapshot();
+        }
+        continue;
+      }
+
+      // commit
+      if (cmd.has_commit_turn()){
+        bool ok = g_match.board.commitTurn();
+        if (!ok){
+          g_match.sendError(rw, 409, g_match.board.lastError());
+        } else {
+          g_match.broadcastMsg("[cmd] commit");
+          g_match.broadcastSnapshot();
+        }
+        continue;
+      }
+
+      // doubling cube
+      if (cmd.has_offer_cube()){
+        if (!g_match.board.offerCube()) g_match.sendError(rw, 409, g_match.board.lastError());
+        else { g_match.broadcastMsg("[cmd] double"); g_match.broadcastSnapshot(); }
+        continue;
+      }
+      if (cmd.has_take_cube()){
+        if (!g_match.board.takeCube()) g_match.sendError(rw, 409, g_match.board.lastError());
+        else { g_match.broadcastMsg("[cmd] take"); g_match.broadcastSnapshot(); }
+        continue;
+      }
+      if (cmd.has_drop_cube()){
+        if (!g_match.board.dropCube()) g_match.sendError(rw, 409, g_match.board.lastError());
+        else { g_match.broadcastMsg("[cmd] drop"); g_match.broadcastSnapshot(); }
+        continue;
+      }
+
+      // unknown -> snapshot (helps debugging)
+      g_match.sendSnapshot(rw);
+    }
+
+    // remove subscriber
+    {
+      std::lock_guard<std::mutex> lk(g_match.mtx);
+      auto& v = g_match.subs;
+      v.erase(std::remove(v.begin(), v.end(), rw), v.end());
     }
     return Status::OK;
   }
 };
 
-int main(){
-  ServerBuilder b;
-  b.AddListeningPort("0.0.0.0:50051", grpc::InsecureServerCredentials());
-  AuthServiceImpl auth; MatchServiceImpl match;
-  b.RegisterService(&auth); b.RegisterService(&match);
-  std::unique_ptr<Server> server(b.BuildAndStart());
-  std::cout << "bg_server on :50051\n";
+// ---------------- main ----------------
+
+int main(int argc, char** argv){
+  (void)argc; (void)argv;
+
+  std::string addr("0.0.0.0:50051");
+  AuthServiceImpl auth;
+  MatchServiceImpl match;
+
+  ServerBuilder builder;
+  builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
+  builder.RegisterService(&auth);
+  builder.RegisterService(&match);
+  std::unique_ptr<Server> server(builder.BuildAndStart());
+
+  if (g_match.log) g_match.log->log("[server] listening on ", addr);
+
   server->Wait();
   return 0;
 }
