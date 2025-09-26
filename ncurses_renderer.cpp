@@ -59,10 +59,14 @@ void NcursesRenderer::drawChrome(){
 
     // ---- Outer border (top/bottom) ----
     put(_win,  2, 0,            "┌", CP_BORDER);
-    put(_win,  2, kWidth-2,     "┐", CP_BORDER); // right corner shifted left by 1
+    put(_win,  2, kWidth-3,     "┬", CP_BORDER);
+    put(_win,  2, kWidth-2,     "─", CP_BORDER);
+    put(_win,  2, kWidth-1,     "┐", CP_BORDER);
     put(_win, 14, 0,            "└", CP_BORDER);
-    put(_win, 14, kWidth-2,     "┘", CP_BORDER); // right corner shifted left by 1
-    for (int x=1; x<kWidth-2; ++x){
+    put(_win, 14, kWidth-3,     "┴", CP_BORDER);
+    put(_win, 14, kWidth-2,     "─", CP_BORDER);
+    put(_win, 14, kWidth-1,     "┘", CP_BORDER);
+    for (int x=1; x<kWidth-3; ++x){
         put(_win,  2, x, "─", CP_BORDER);
         put(_win, 14, x, "─", CP_BORDER);
     }
@@ -70,14 +74,15 @@ void NcursesRenderer::drawChrome(){
     // Outer verticals (right border shifted left by 1)
     for (int y=3; y<=13; ++y){
         put(_win, y, 0,            "│", CP_BORDER);
-        put(_win, y, kWidth-2,     "│", CP_BORDER);
+        put(_win, y, kWidth-3,     "│", CP_BORDER);
+        put(_win, y, kWidth-1,     "│", CP_BORDER);
     }
 
     // Center thick separator (home line) at y=8
-    for (int x=1; x<kWidth-2; ++x) put(_win, 8, x, "═", CP_BORDER);
+    for (int x=1; x<kWidth-3; ++x) put(_win, 8, x, "═", CP_BORDER);
     // Correct joints where double horizontal meets single vertical borders
     put(_win, 8, 0,        "╞", CP_BORDER);        // vertical single + right double
-    put(_win, 8, kWidth-2, "╡", CP_BORDER);        // moved with the right border
+    put(_win, 8, kWidth-3, "╪", CP_BORDER);
 
     // ---- Bar gutter: rails at x=13 and x=15; center x=14 is free
     for (int y=3; y<=13; ++y){
@@ -143,7 +148,7 @@ void NcursesRenderer::render(const Board::State& s){
     // nudge it left by 1 so we don't overwrite the border column.
     Origin wo = WHITEOFF;
     Origin bo = BLACKOFF;
-    const int right_border_x = kWidth - 2; // new right edge column
+    const int right_border_x = kWidth - 1; // new outer right border
     if (wo.x >= right_border_x) wo.x = right_border_x - 1;
     if (bo.x >= right_border_x) bo.x = right_border_x - 1;
 

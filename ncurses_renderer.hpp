@@ -22,7 +22,7 @@ public:
 
     // Make the frame symmetric: 29 cols total, right border at x=28.
     static constexpr int kHeight = 17; // rows: 0..16
-    static constexpr int kWidth  = 29; // cols: 0..28
+    static constexpr int kWidth  = 30; // cols: 0..28
 
 private:
     WINDOW* _win;
@@ -33,6 +33,7 @@ private:
     // UTF-8 glyphs (plain narrow strings)
     const char* WCHK = "○"; // white checker
     const char* BCHK = "●"; // black checker
+    //Changed EMPTY from " " to "~" for DEBUGGING
     const char* EMPTY= "~"; // eraser
 
     // Color pairs
@@ -72,8 +73,8 @@ private:
     // Bars / off ladders — centered bar at x=14; off ladders moved to x=27
     const Origin WHITEBAR = {Dir::UP,   14,  7}; // rows 7..3  (upper gutter, drawn up)
     const Origin BLACKBAR = {Dir::DOWN, 14,  9}; // rows 9..13 (lower gutter, drawn down)
-    const Origin BLACKOFF = {Dir::DOWN, 27,  3}; // rows 3..7   (upper off, x=27)
-    const Origin WHITEOFF = {Dir::UP,   27, 13}; // rows 13..9  (lower off, x=27)
+    const Origin BLACKOFF = {Dir::DOWN, 28,  3}; // rows 3..7   (upper off, x=27)
+    const Origin WHITEOFF = {Dir::UP,   28, 13}; // rows 13..9  (lower off, x=27)
 
     // Utilities
     static bool inwin(WINDOW* w, int y, int x);

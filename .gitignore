@@ -45,3 +45,5 @@ Archive/
 
 # My stuff
 *.save
+*.old
+*.new
