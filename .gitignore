@@ -42,3 +42,6 @@ Archive/
 *.tar.gz
 *.tgz
 *.zip
+
+# My stuff
+*.save

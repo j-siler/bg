@@ -1,6 +1,6 @@
 #include "ncurses_renderer.hpp"
 #include <algorithm>
-
+#include <cstdio>
 namespace BG {
 
 NcursesRenderer::NcursesRenderer(WINDOW* win) : _win(win) {
@@ -59,25 +59,25 @@ void NcursesRenderer::drawChrome(){
 
     // ---- Outer border (top/bottom) ----
     put(_win,  2, 0,            "┌", CP_BORDER);
-    put(_win,  2, kWidth-1,     "┐", CP_BORDER); // right corner at x=28
+    put(_win,  2, kWidth-2,     "┐", CP_BORDER); // right corner shifted left by 1
     put(_win, 14, 0,            "└", CP_BORDER);
-    put(_win, 14, kWidth-1,     "┘", CP_BORDER);
-    for (int x=1; x<kWidth-1; ++x){
+    put(_win, 14, kWidth-2,     "┘", CP_BORDER); // right corner shifted left by 1
+    for (int x=1; x<kWidth-2; ++x){
         put(_win,  2, x, "─", CP_BORDER);
         put(_win, 14, x, "─", CP_BORDER);
     }
 
-    // Outer verticals
+    // Outer verticals (right border shifted left by 1)
     for (int y=3; y<=13; ++y){
         put(_win, y, 0,            "│", CP_BORDER);
-        put(_win, y, kWidth-1,     "│", CP_BORDER);
+        put(_win, y, kWidth-2,     "│", CP_BORDER);
     }
 
     // Center thick separator (home line) at y=8
-    for (int x=1; x<kWidth-1; ++x) put(_win, 8, x, "═", CP_BORDER);
+    for (int x=1; x<kWidth-2; ++x) put(_win, 8, x, "═", CP_BORDER);
     // Correct joints where double horizontal meets single vertical borders
-    put(_win, 8, 0,        "╞", CP_BORDER); // vertical single + right double
-    put(_win, 8, kWidth-1, "╡", CP_BORDER); // vertical single + left double
+    put(_win, 8, 0,        "╞", CP_BORDER);        // vertical single + right double
+    put(_win, 8, kWidth-2, "╡", CP_BORDER);        // moved with the right border
 
     // ---- Bar gutter: rails at x=13 and x=15; center x=14 is free
     for (int y=3; y<=13; ++y){
@@ -132,17 +132,25 @@ void NcursesRenderer::render(const Board::State& s){
     }
 
     drawChrome();
-
     // Points 1..24
     for (int i=0;i<24;++i){
         const auto &pt = s.points[i];
         drawStack(pt.side, pt.count, PO[i]);
     }
-    // Bars / off ladders (centered bar x=14, off ladders x=27)
+
+    // Bars / off ladders
+    // If any off-ladder origin lands on the right border after the shift,
+    // nudge it left by 1 so we don't overwrite the border column.
+    Origin wo = WHITEOFF;
+    Origin bo = BLACKOFF;
+    const int right_border_x = kWidth - 2; // new right edge column
+    if (wo.x >= right_border_x) wo.x = right_border_x - 1;
+    if (bo.x >= right_border_x) bo.x = right_border_x - 1;
+
     drawStack(WHITE, s.whitebar, WHITEBAR);
     drawStack(BLACK, s.blackbar, BLACKBAR);
-    drawStack(WHITE, s.whiteoff, WHITEOFF);
-    drawStack(BLACK, s.blackoff, BLACKOFF);
+    drawStack(WHITE, s.whiteoff, wo);
+    drawStack(BLACK, s.blackoff, bo);
 
     wrefresh(_win);
 }

@@ -11,6 +11,7 @@
 #include <csignal>
 #include <functional>
 #include <memory>
+#include <chrono>   // <-- added
 
 #include "bg/v1/bg.grpc.pb.h"
 #include "bg/v1/bg.pb.h"
@@ -141,13 +142,28 @@ int main(){
     mvprintw(0, 0, "bg_tui — Enter=commit · two numbers or 'step FROM PIP' · 'roll' 'set d1 d2' 'undo' 'double' 'take' 'drop' · 'help' · 'quit'");
     wnoutrefresh(stdscr);
 
+    // If we don't have a snapshot yet, don't paint an "empty" board.
+    if (model.st.points_size() == 0) {
+      // show a gentle status so users know why it's blank
+      move(LINES-2, 0); clrtoeol();
+      attron(COLOR_PAIR(4));
+      addnstr("waiting for server snapshot…", COLS - 1);
+      attroff(COLOR_PAIR(4));
+      wnoutrefresh(stdscr);
+      // keep the board window in sync (but empty)
+      werase(bw);
+      wnoutrefresh(bw);
+      doupdate();
+      return;
+    }
+
     // board
     BG::Board::State s{}; fillBoardState(model.st, s);
     werase(bw);
     renderer->render(s);
     wnoutrefresh(bw);
-    //====
-    // status (phase/side/dice + last message)
+
+    //==== status (phase/side/dice + last message)
     move(LINES-2, 0); clrtoeol();
     
     // phase
@@ -250,6 +266,20 @@ int main(){
   { proto::Envelope rq; rq.mutable_header()->set_proto_version(1); rq.mutable_header()->set_match_id("m1");
     rq.mutable_cmd()->mutable_request_snapshot(); stream->Write(rq); if (log) log->log("[client] request_snapshot"); }
 
+  // ---- NEW: wait briefly for the first snapshot so the first paint isn't empty ----
+  {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+      {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (model.st.points_size() > 0) break;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+  }
+  // -------------------------------------------------------------------------------
+
   // simple input buffer (non-blocking line editor)
   std::string ibuf;
 
@@ -264,7 +294,7 @@ int main(){
     move(y, x);
   };
 
-  // first paint
+  // first paint (now after the brief wait above)
   paintUI(model, /*fullClear*/true);
   draw_prompt();
 
