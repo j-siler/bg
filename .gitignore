@@ -1,115 +1,43 @@
-# -----------------------
-# OS cruft (macOS/Windows)
-# -----------------------
+# OS
 .DS_Store
-.AppleDouble
-.LSOverride
-Icon?
-__MACOSX/
-.Trashes
 Thumbs.db
-ehthumbs.db
 
-# -----------------------
-# Editor/IDE metadata
-# -----------------------
-# Emacs
-*~
-.#*
-\#*\#
-*.elc
-.emacs.desktop
-.emacs.desktop.lock
-auto-save-list/
-
-# Vim
-*.swp
-*.swo
-*.un~
-Session.vim
-.netrwhist
-
-# VS Code / CLion / Qt Creator / others
+# Editors/IDEs
 .vscode/
 .idea/
 *.user
-*.user.*
-CMakeLists.txt.user
+*.pro.user*
 *.creator.*
-*.pro.user
-*.pro.user.*
 *.kdev4
-*.cache/
-*.config/
-*.files
-*.includes
+*~
+.#*
+\#*\#
+*.swp
+*.swo
 
-# -----------------------
-# CMake / build artifacts
-# -----------------------
+# CMake/builds
 /build*/
-build/
-out/
-bin/
-obj/
-lib/
-dist/
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-CTestTestfile.cmake
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/CTestTestfile.cmake
+**/Makefile
 Testing/
 
-# If you generate this, you may want to KEEP it; comment out to commit it.
-# compile_commands.json
-
-# -----------------------
-# Protobuf (if generated in-source; prefer out-of-source)
-# -----------------------
-*.pb.cc
+# Generated (protobuf)
 *.pb.h
-*.grpc.pb.cc
-*.grpc.pb.h
+*.pb.cc
 
-# -----------------------
-# Coverage / test output
-# -----------------------
-*.gcda
-*.gcno
-*.gcov
-lcov.info
-coverage/
-
-# -----------------------
-# Logs / dumps / temp
-# -----------------------
+# Binaries & artifacts
+bin/
+lib/
+obj/
+dist/
 *.log
-*.tmp
-*.bak
-*.orig
-*.rej
-core
-core.*
 
-# -----------------------
-# Archives / local assets
-# -----------------------
-*.zip
+# Archives
+Archive/
 *.tar
 *.tar.gz
 *.tgz
-bg-archive.zip
-
-# -----------------------
-# Python venvs (if any tooling/scripts)
-# -----------------------
-.venv/
-venv/
-
-# my stuff
-Archive/
-Save/
-*.save
-temp.*
+*.zip
