@@ -33,7 +33,6 @@ private:
     // UTF-8 glyphs (plain narrow strings)
     const char* WCHK = "○"; // white checker
     const char* BCHK = "●"; // black checker
-    //Changed EMPTY from " " to "~" for DEBUGGING
     const char* EMPTY= "~"; // eraser
 
     // Color pairs
@@ -50,21 +49,18 @@ private:
         /*  4 */ {Dir::UP,   19, 13},
         /*  5 */ {Dir::UP,   17, 13},
         /*  6 */ {Dir::UP,   15, 13},
-	
-	/*  7 */ {Dir::UP,   11, 13},
-	/*  8 */ {Dir::UP,    9, 13},
+        /*  7 */ {Dir::UP,   11, 13},
+        /*  8 */ {Dir::UP,    9, 13},
         /*  9 */ {Dir::UP,    7, 13},
         /* 10 */ {Dir::UP,    5, 13},
         /* 11 */ {Dir::UP,    3, 13},
         /* 12 */ {Dir::UP,    1, 13},
-	
         /* 13 */ {Dir::DOWN,  1,  3},
         /* 14 */ {Dir::DOWN,  3,  3},
         /* 15 */ {Dir::DOWN,  5,  3},
         /* 16 */ {Dir::DOWN,  7,  3},
         /* 17 */ {Dir::DOWN,  9,  3},
         /* 18 */ {Dir::DOWN, 11,  3},
-	
         /* 19 */ {Dir::DOWN, 15,  3},
         /* 20 */ {Dir::DOWN, 17,  3},
         /* 21 */ {Dir::DOWN, 19,  3},
@@ -74,10 +70,10 @@ private:
     };
 
     // Bars / off ladders — centered bar at x=14; off ladders moved to x=27
-    const Origin WHITEBAR = {Dir::UP,   14,  7}; // rows 7..3  (upper gutter, drawn up)
-    const Origin BLACKBAR = {Dir::DOWN, 14,  9}; // rows 9..13 (lower gutter, drawn down)
-    const Origin BLACKOFF = {Dir::DOWN, 28,  3}; // rows 3..7   (upper off, x=27)
-    const Origin WHITEOFF = {Dir::UP,   28, 13}; // rows 13..9  (lower off, x=27)
+    const Origin WHITEBAR = {Dir::UP,   13,  7}; // rows 7..3  (upper gutter, drawn up)
+    const Origin BLACKBAR = {Dir::DOWN, 13,  9}; // rows 9..13 (lower gutter, drawn down)
+    const Origin BLACKOFF = {Dir::DOWN, 27,  3}; // rows 3..7   (upper off, x=27)
+    const Origin WHITEOFF = {Dir::UP,   27, 13}; // rows 13..9  (lower off, x=27)
 
     // Utilities
     static bool inwin(WINDOW* w, int y, int x);

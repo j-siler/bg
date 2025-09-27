@@ -1,6 +1,7 @@
 #include "ncurses_renderer.hpp"
 #include <algorithm>
 #include <cstdio>
+
 namespace BG {
 
 NcursesRenderer::NcursesRenderer(WINDOW* win) : _win(win) {
@@ -19,13 +20,17 @@ bool NcursesRenderer::checkSize() const {
     return (h >= kHeight) && (w >= kWidth);
 }
 
-bool NcursesRenderer::inwin(WINDOW* w, int y, int x){
+static inline bool inwin_xy(WINDOW* w, int y, int x){
     int h=0, ww=0; getmaxyx(w,h,ww);
     return (y>=0 && y<h && x>=0 && x<ww);
 }
 
+bool NcursesRenderer::inwin(WINDOW* w, int y, int x){
+    return inwin_xy(w,y,x);
+}
+
 void NcursesRenderer::put(WINDOW* w, int y, int x, const char* s, short cp){
-    if (!inwin(w,y,x)) return;
+    if (!inwin_xy(w,y,x)) return;
     if (cp) wattron(w, COLOR_PAIR(cp));
     mvwaddstr(w, y, x, s);   // UTF-8 via narrow API
     if (cp) wattroff(w, COLOR_PAIR(cp));
@@ -37,6 +42,12 @@ void NcursesRenderer::putch(WINDOW* w, int y, int x, char ch, short cp){
 }
 
 void NcursesRenderer::drawChrome(){
+    // Derived columns for the right gutter
+    const int X_LEFT   = 0;
+    const int X_INNER  = kWidth - 3; // T column (left edge of bear-off gutter)
+    const int X_OFF    = kWidth - 2; // off-lane column (between inner and outer)
+    const int X_RIGHT  = kWidth - 1; // new outer right border
+
     // Clear our rect
     for (int y=0; y<kHeight; ++y)
         for (int x=0; x<kWidth; ++x)
@@ -47,7 +58,7 @@ void NcursesRenderer::drawChrome(){
     for (int p=13; p<=24; ++p){
         int x = PO[p-1].x;
         int tens = p / 10, ones = p % 10;
-        putch(_win, 0, x, char('0'+tens), CP_TEXT);
+        if (tens) putch(_win, 0, x, char('0'+tens), CP_TEXT);
         putch(_win, 1, x, char('0'+ones), CP_TEXT);
     }
     // Bottom: points 12..1
@@ -57,46 +68,53 @@ void NcursesRenderer::drawChrome(){
         putch(_win, 16, x, char('0'+(p%10)), CP_TEXT);
     }
 
-    // ---- Outer border (top/bottom) ----
-    put(_win,  2, 0,            "┌", CP_BORDER);
-    put(_win,  2, kWidth-3,     "┬", CP_BORDER);
-    put(_win,  2, kWidth-2,     "─", CP_BORDER);
-    put(_win,  2, kWidth-1,     "┐", CP_BORDER);
-    put(_win, 14, 0,            "└", CP_BORDER);
-    put(_win, 14, kWidth-3,     "┴", CP_BORDER);
-    put(_win, 14, kWidth-2,     "─", CP_BORDER);
-    put(_win, 14, kWidth-1,     "┘", CP_BORDER);
-    for (int x=1; x<kWidth-3; ++x){
+    // ---- Outer border (top/bottom) with right gutter ----
+    put(_win,  2, X_LEFT,  "┌", CP_BORDER);
+    put(_win, 14, X_LEFT,  "└", CP_BORDER);
+
+    // Main-board horizontal runs up to (but not including) the inner T column
+    for (int x=X_LEFT+1; x<X_INNER; ++x){
         put(_win,  2, x, "─", CP_BORDER);
         put(_win, 14, x, "─", CP_BORDER);
     }
 
-    // Outer verticals (right border shifted left by 1)
+    // T-junctions at the inner gutter edge
+    put(_win,  2, X_INNER, "┬", CP_BORDER);
+    put(_win, 14, X_INNER, "┴", CP_BORDER);
+
+    // One extra segment into the gutter
+    put(_win,  2, X_OFF, "─", CP_BORDER);
+    put(_win, 14, X_OFF, "─", CP_BORDER);
+
+    // New outer right corners
+    put(_win,  2, X_RIGHT, "┐", CP_BORDER);
+    put(_win, 14, X_RIGHT, "┘", CP_BORDER);
+
+    // Verticals: left border, inner gutter line, outer border
     for (int y=3; y<=13; ++y){
-        put(_win, y, 0,            "│", CP_BORDER);
-        put(_win, y, kWidth-3,     "│", CP_BORDER);
-        put(_win, y, kWidth-1,     "│", CP_BORDER);
+        put(_win, y, X_LEFT,  "│", CP_BORDER);
+        put(_win, y, X_INNER, "│", CP_BORDER);
+        put(_win, y, X_RIGHT, "│", CP_BORDER);
     }
 
-    // Center thick separator (home line) at y=8
-    for (int x=1; x<kWidth-3; ++x) put(_win, 8, x, "═", CP_BORDER);
-    // Correct joints where double horizontal meets single vertical borders
-    put(_win, 8, 0,        "╞", CP_BORDER);        // vertical single + right double
-    put(_win, 8, kWidth-3, "╪", CP_BORDER);
+    // Center thick separator (home line) across main board only
+    for (int x=X_LEFT+1; x<X_INNER; ++x) put(_win, 8, x, "═", CP_BORDER);
+    put(_win, 8, X_LEFT,  "╞", CP_BORDER);
+    put(_win, 8, X_INNER, "╪", CP_BORDER); // crossing at inner gutter line
 
-    // ---- Bar gutter: rails at x=13 and x=15; center x=14 is free
+    // ---- Center bar rails (already shifted left by 1) ----
     for (int y=3; y<=13; ++y){
-        put(_win, y, 13, "│", CP_BORDER);
-        put(_win, y, 15, "│", CP_BORDER);
+        put(_win, y, 12, "│", CP_BORDER);
+        put(_win, y, 14, "│", CP_BORDER);
     }
     // Intersections with top/bottom borders
-    put(_win,  2, 13, "┬", CP_BORDER);
-    put(_win,  2, 15, "┬", CP_BORDER);
-    put(_win, 14, 13, "┴", CP_BORDER);
-    put(_win, 14, 15, "┴", CP_BORDER);
+    put(_win, 2, 12, "┬", CP_BORDER);
+    put(_win, 2, 14, "┬", CP_BORDER);
+    put(_win, 14, 12, "┴", CP_BORDER);
+    put(_win, 14, 14, "┴", CP_BORDER);
     // Intersections with center thick line: use vertical single + horizontal double
-    put(_win, 8, 13, "╪", CP_BORDER);
-    put(_win, 8, 15, "╪", CP_BORDER);
+    put(_win, 8, 12, "╪", CP_BORDER);
+    put(_win, 8, 14, "╪", CP_BORDER);
 }
 
 void NcursesRenderer::drawStack(Side side, unsigned cnt, const Origin& o){
@@ -137,6 +155,7 @@ void NcursesRenderer::render(const Board::State& s){
     }
 
     drawChrome();
+
     // Points 1..24
     for (int i=0;i<24;++i){
         const auto &pt = s.points[i];
@@ -148,7 +167,7 @@ void NcursesRenderer::render(const Board::State& s){
     // nudge it left by 1 so we don't overwrite the border column.
     Origin wo = WHITEOFF;
     Origin bo = BLACKOFF;
-    const int right_border_x = kWidth - 1; // new outer right border
+    const int right_border_x = kWidth - 1; // outer right border
     if (wo.x >= right_border_x) wo.x = right_border_x - 1;
     if (bo.x >= right_border_x) bo.x = right_border_x - 1;
 
