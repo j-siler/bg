@@ -31,9 +31,9 @@ private:
     struct Origin { Dir dir; int x, y; };
 
     // UTF-8 glyphs (plain narrow strings)
-    const char* WCHK = "○"; // white checker
+    const char* WCHK = "●"; // white checker
     const char* BCHK = "●"; // black checker
-    const char* EMPTY= "~"; // eraser
+    const char* EMPTY= " "; // eraser
 
     // Color pairs
     static constexpr short CP_WHITE = 1;

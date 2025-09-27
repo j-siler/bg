@@ -4,6 +4,21 @@
 
 namespace BG {
 
+// ---- Interior color policy (typed, file-local) ----
+// Interior variants: same foregrounds as existing pairs, unified background (kBoardBG)
+static constexpr short CP_FIELD      = 5;  // interior fill for "plain space"
+static constexpr short CP_WHITE_INT  = 6;  // interior variant of CP_WHITE
+static constexpr short CP_BLACK_INT  = 7;  // interior variant of CP_BLACK
+static constexpr short CP_BORDER_INT = 8;  // interior variant of CP_BORDER
+static constexpr short CP_TEXT_INT   = 9;  // interior variant of CP_TEXT
+
+static constexpr short kBoardBG      = COLOR_BLACK; // change to COLOR_GREEN for "felt"
+
+// Board interior: rows 3..13, cols 1..(kWidth-3)-1 (left edge to T column exclusive)
+static inline bool in_board_interior(int y, int x, int kWidth){
+    return (y >= 3 && y <= 13 && x >= 1 && x < (kWidth - 3));
+}
+
 NcursesRenderer::NcursesRenderer(WINDOW* win) : _win(win) {
     if (has_colors()) {
         start_color();
@@ -12,6 +27,13 @@ NcursesRenderer::NcursesRenderer(WINDOW* win) : _win(win) {
         init_pair(CP_BLACK,  COLOR_CYAN,   -1);  // choose any contrasting color
         init_pair(CP_BORDER, COLOR_YELLOW, -1);
         init_pair(CP_TEXT,   COLOR_GREEN,  -1);
+
+        // Interior variants: same FG, unified BG across the playing field
+        init_pair(CP_FIELD,      COLOR_WHITE,   kBoardBG);
+        init_pair(CP_WHITE_INT,  COLOR_MAGENTA, kBoardBG);
+        init_pair(CP_BLACK_INT,  COLOR_CYAN,    kBoardBG);
+        init_pair(CP_BORDER_INT, COLOR_YELLOW,  kBoardBG);
+        init_pair(CP_TEXT_INT,   COLOR_GREEN,   kBoardBG);
     }
 }
 
@@ -31,13 +53,26 @@ bool NcursesRenderer::inwin(WINDOW* w, int y, int x){
 
 void NcursesRenderer::put(WINDOW* w, int y, int x, const char* s, short cp){
     if (!inwin_xy(w,y,x)) return;
-    if (cp) wattron(w, COLOR_PAIR(cp));
+
+    // Inside the board interior, remap to interior variants so BG is unified.
+    short eff = cp;
+    if (in_board_interior(y, x, kWidth)) {
+        if      (cp == CP_WHITE)  eff = CP_WHITE_INT;
+        else if (cp == CP_BLACK)  eff = CP_BLACK_INT;
+        else if (cp == CP_BORDER) eff = CP_BORDER_INT;
+        else if (cp == CP_TEXT)   eff = CP_TEXT_INT;
+        else if (cp == 0)         eff = CP_FIELD;     // plain spaces
+        else                      eff = CP_FIELD;     // any other pair → safe default
+    }
+
+    if (eff) wattron(w, COLOR_PAIR(eff));
     mvwaddstr(w, y, x, s);   // UTF-8 via narrow API
-    if (cp) wattroff(w, COLOR_PAIR(cp));
+    if (eff) wattroff(w, COLOR_PAIR(eff));
 }
 
 void NcursesRenderer::putch(WINDOW* w, int y, int x, char ch, short cp){
     char buf[2] = { ch, 0 };
+    // Delegate to put() so the mapping logic stays centralized.
     put(w, y, x, buf, cp);
 }
 
@@ -48,10 +83,13 @@ void NcursesRenderer::drawChrome(){
     const int X_OFF    = kWidth - 2; // off-lane column (between inner and outer)
     const int X_RIGHT  = kWidth - 1; // new outer right border
 
-    // Clear our rect
-    for (int y=0; y<kHeight; ++y)
-        for (int x=0; x<kWidth; ++x)
-            put(_win, y, x, " ");
+    // Clear our rect: interior gets unified BG; elsewhere keep terminal defaults
+    for (int y=0; y<kHeight; ++y){
+        for (int x=0; x<kWidth; ++x){
+            const bool interior = in_board_interior(y, x, kWidth);
+            put(_win, y, x, " ", interior ? CP_FIELD : 0);
+        }
+    }
 
     // ---- Numbers (aligned to point columns) ----
     // Top: points 13..24
@@ -180,3 +218,5 @@ void NcursesRenderer::render(const Board::State& s){
 }
 
 } // namespace BG
+
+//The end.  Remove this line
