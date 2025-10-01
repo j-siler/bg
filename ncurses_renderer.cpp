@@ -135,10 +135,13 @@ void NcursesRenderer::drawChrome(){
         put(_win, y, X_RIGHT, "│", CP_BORDER);
     }
 
-    // Center thick separator (home line) across main board only
-    for (int x=X_LEFT+1; x<X_INNER; ++x) put(_win, 8, x, "═", CP_BORDER);
-    put(_win, 8, X_LEFT,  "╞", CP_BORDER);
-    put(_win, 8, X_INNER, "╪", CP_BORDER); // crossing at inner gutter line
+// Center thick separator (home line): span full width to the right border
+    for (int x = X_LEFT+1; x < X_INNER; ++x) put(_win, 8, x, "═", CP_BORDER);
+    put(_win, 8, X_LEFT,  "╞", CP_BORDER);   // left border join
+    put(_win, 8, X_INNER, "╪", CP_BORDER);    // inner gutter join
+    
+    for (int x = X_INNER+1; x < X_RIGHT; ++x) put(_win, 8, x, "═", CP_BORDER);
+    put(_win, 8, X_RIGHT, "╡", CP_BORDER);    // right border join
 
     // ---- Center bar rails (already shifted left by 1) ----
     for (int y=3; y<=13; ++y){

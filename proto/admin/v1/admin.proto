@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package admin.v1;
+
+option csharp_namespace     = "Admin.V1";
+option go_package           = "admin/v1;adminv1";
+option java_multiple_files  = true;
+option java_package         = "admin.v1";
+option objc_class_prefix    = "AdminV1";
+
+// ---- Auth ----
+service AuthService {
+  rpc Login  (LoginReq)  returns (LoginResp);
+  rpc Logout (LogoutReq) returns (LogoutResp);
+}
+
+message LoginReq  { string user = 1; string pass = 2; }
+message LoginResp { bool ok = 1; string reason = 2; }
+
+message LogoutReq  { string user = 1; }
+message LogoutResp { bool ok = 1; string reason = 2; }
+
+// ---- Match (create/join/leave) ----
+service MatchService {
+  rpc CreateMatch (CreateMatchReq) returns (CreateMatchResp);
+  rpc JoinMatch   (JoinMatchReq)   returns (JoinMatchResp);
+  rpc LeaveMatch  (LeaveMatchReq)  returns (LeaveMatchResp);
+}
+
+enum SeatSide {
+  SEAT_UNSPECIFIED = 0;
+  SEAT_WHITE       = 1;
+  SEAT_BLACK       = 2;
+  SEAT_OBSERVER    = 3;
+}
+
+message CreateMatchReq {
+  string name = 1;
+  uint32 length_points = 2; // 0 => continuous (money)
+  bool   continuous    = 3; // if true, force length_points=0
+}
+message CreateMatchResp { bool ok = 1; string reason = 2; }
+
+message JoinMatchReq {
+  string name = 1;
+  string user = 2;
+  SeatSide side = 3;
+}
+message JoinMatchResp { bool ok = 1; string reason = 2; }
+
+message LeaveMatchReq {
+  string name = 1;
+  string user = 2;
+}
+message LeaveMatchResp { bool ok = 1; string reason = 2; }
