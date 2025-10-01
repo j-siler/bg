@@ -97,9 +97,14 @@ Commits serve as checkpoints; all future development assumes repo state as basel
 ---
 
 ### proto/
+
+### proto/bg/v1
+
 - **bg.proto**  
   Game RPCs: login, match management, board state snapshots.  
   **Status:** Authoritative schema. Must align with server code.
+
+### proto/admin/v1
 
 - **admin.proto**  
   Admin RPCs for login/logout, match management.  
